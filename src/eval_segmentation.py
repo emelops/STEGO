@@ -1,8 +1,7 @@
 # See https://github.com/mhamilton723/STEGO/issues/16#issuecomment-1168772107
-import os
 from collections import defaultdict
 from multiprocessing import Pool, get_context
-from os.path import join
+from pathlib import Path
 
 import hydra
 import matplotlib.pyplot as plt
@@ -34,8 +33,8 @@ def plot_cm(histogram, label_cmap, cfg):
     sns.heatmap(hist.t(), annot=False, fmt="g", ax=ax, cmap="Blues", cbar=False)
     ax.set_title("Predicted labels", fontsize=28)
     ax.set_ylabel("True labels", fontsize=28)
-    names = get_class_labels(cfg.dataset_name)
-    if cfg.extra_clusters:
+    names = get_class_labels(cfg.eval.dataset_name)
+    if cfg.eval.extra_clusters:
         names = names + ["Extra"]
     ax.set_xticks(np.arange(0, len(names)) + 0.5)
     ax.set_yticks(np.arange(0, len(names)) + 0.5)
@@ -69,44 +68,46 @@ def batched_crf(pool, img_tensor, prob_tensor):
     return torch.cat([torch.from_numpy(arr).unsqueeze(0) for arr in outputs], dim=0)
 
 
-@hydra.main(config_path="configs", config_name="eval_config", version_base="1.1")
+@hydra.main(config_path="configs", config_name="master_config", version_base="1.1")
 def my_app(cfg: DictConfig) -> None:
     pytorch_data_dir = cfg.pytorch_data_dir
-    result_dir = "../results/predictions/{}".format(cfg.experiment_name)
-    os.makedirs(join(result_dir, "img"), exist_ok=True)
-    os.makedirs(join(result_dir, "label"), exist_ok=True)
-    os.makedirs(join(result_dir, "cluster"), exist_ok=True)
-    os.makedirs(join(result_dir, "picie"), exist_ok=True)
+    result_dir = Path(f"../results/predictions/{cfg.eval.experiment_name}")
+    (result_dir / "img").mkdir(exist_ok=True)
+    (result_dir / "label").mkdir(exist_ok=True)
+    (result_dir / "cluster").mkdir(exist_ok=True)
+    (result_dir / "picie").mkdir(exist_ok=True)
 
-    for model_path in cfg.model_paths:
+    for model_path in cfg.eval.model_paths:
         model = LitUnsupervisedSegmenter.load_from_checkpoint(model_path)
         print(OmegaConf.to_yaml(model.cfg))
 
-        run_picie = cfg.run_picie and model.cfg.dataset_name == "cocostuff27"
+        run_picie = cfg.eval.run_picie and model.cfg.eval.dataset_name == "cocostuff27"
         if run_picie:
             picie_state = torch.load(
                 "../saved_models/picie_and_probes.pth", map_location=torch.device("cpu")
             )
-            # picie = picie_state["model"].cuda()
-            # picie_cluster_probe = picie_state["cluster_probe"].module.cuda()
-            picie = picie_state["model"]
-            picie_cluster_probe = picie_state["cluster_probe"].module
+            if cfg.use_cuda:
+                picie = picie_state["model"].cuda()
+                picie_cluster_probe = picie_state["cluster_probe"].module.cuda()
+            else:
+                picie = picie_state["model"]
+                picie_cluster_probe = picie_state["cluster_probe"].module
             picie_cluster_metrics = picie_state["cluster_metrics"]
 
         loader_crop = "center"
         test_dataset = ContrastiveSegDataset(
             pytorch_data_dir=pytorch_data_dir,
-            dataset_name=model.cfg.dataset_name,
+            dataset_name=model.cfg.eval.dataset_name,
             crop_type=None,
             image_set="val",
-            transform=get_transform(cfg.res, False, loader_crop),
-            target_transform=get_transform(cfg.res, True, loader_crop),
+            transform=get_transform(cfg.eval.res, False, loader_crop),
+            target_transform=get_transform(cfg.eval.res, True, loader_crop),
             cfg=model.cfg,
         )
 
         test_loader = DataLoader(
             test_dataset,
-            cfg.batch_size * 2,
+            cfg.eval.batch_size * 2,
             shuffle=False,
             num_workers=cfg.num_workers,
             pin_memory=True,
@@ -114,10 +115,12 @@ def my_app(cfg: DictConfig) -> None:
             multiprocessing_context=torch.multiprocessing.get_context("spawn"),
         )
 
-        # model.eval().cuda()
-        model.eval()
+        if cfg.use_cuda:
+            model.eval().cuda()
+        else:
+            model.eval()
 
-        if cfg.use_ddp:
+        if cfg.eval.use_ddp:
             par_model = torch.nn.DataParallel(model.net)
             if run_picie:
                 par_picie = torch.nn.DataParallel(picie)
@@ -126,20 +129,22 @@ def my_app(cfg: DictConfig) -> None:
             if run_picie:
                 par_picie = picie
 
-        if model.cfg.dataset_name == "cocostuff27":
+        if model.cfg.eval.dataset_name == "cocostuff27":
             # all_good_images = range(10)
             # all_good_images = range(250)
             # all_good_images = [61, 60, 49, 44, 13, 70] #Failure cases
             all_good_images = [19, 54, 67, 66, 65, 75, 77, 76, 124]  # Main figure
-        elif model.cfg.dataset_name == "cityscapes":
+        elif model.cfg.eval.dataset_name == "cityscapes":
             # all_good_images = range(80)
             # all_good_images = [ 5, 20, 56]
             all_good_images = [11, 32, 43, 52]
         else:
-            raise ValueError("Unknown Dataset {}".format(model.cfg.dataset_name))
-        batch_nums = torch.tensor([n // (cfg.batch_size * 2) for n in all_good_images])
+            raise ValueError(f"Unknown Dataset {model.cfg.eval.dataset_name}")
+        batch_nums = torch.tensor(
+            [n // (cfg.eval.batch_size * 2) for n in all_good_images]
+        )
         batch_offsets = torch.tensor(
-            [n % (cfg.batch_size * 2) for n in all_good_images]
+            [n % (cfg.eval.batch_size * 2) for n in all_good_images]
         )
 
         saved_data = defaultdict(list)
@@ -149,10 +154,12 @@ def my_app(cfg: DictConfig) -> None:
         with Pool(cfg.num_workers + 5) as pool:
             for i, batch in enumerate(tqdm(test_loader)):
                 with torch.no_grad():
-                    # img = batch["img"].cuda()
-                    # label = batch["label"].cuda()
-                    img = batch["img"]
-                    label = batch["label"]
+                    if cfg.use_cuda:
+                        img = batch["img"].cuda()
+                        label = batch["label"].cuda()
+                    else:
+                        img = batch["img"]
+                        label = batch["label"]
 
                     feats, code1 = par_model(img)
                     feats, code2 = par_model(img.flip(dims=[3]))
@@ -165,15 +172,21 @@ def my_app(cfg: DictConfig) -> None:
                     linear_probs = torch.log_softmax(model.linear_probe(code), dim=1)
                     cluster_probs = model.cluster_probe(code, 2, log_probs=True)
 
-                    if cfg.run_crf:
-                        # linear_preds = (
-                        #     batched_crf(pool, img, linear_probs).argmax(1).cuda()
-                        # )
-                        # cluster_preds = (
-                        #     batched_crf(pool, img, cluster_probs).argmax(1).cuda()
-                        # )
-                        linear_preds = batched_crf(pool, img, linear_probs).argmax(1)
-                        cluster_preds = batched_crf(pool, img, cluster_probs).argmax(1)
+                    if cfg.eval.run_crf:
+                        if cfg.use_cuda:
+                            linear_preds = (
+                                batched_crf(pool, img, linear_probs).argmax(1).cuda()
+                            )
+                            cluster_preds = (
+                                batched_crf(pool, img, cluster_probs).argmax(1).cuda()
+                            )
+                        else:
+                            linear_preds = batched_crf(pool, img, linear_probs).argmax(
+                                1
+                            )
+                            cluster_preds = batched_crf(
+                                pool, img, cluster_probs
+                            ).argmax(1)
                     else:
                         linear_preds = linear_probs.argmax(1)
                         cluster_preds = cluster_probs.argmax(1)
@@ -212,7 +225,7 @@ def my_app(cfg: DictConfig) -> None:
         print(model_path)
         print(tb_metrics)
 
-        if cfg.run_prediction:
+        if cfg.eval.run_prediction:
             n_rows = 3
         else:
             n_rows = 2
@@ -220,7 +233,7 @@ def my_app(cfg: DictConfig) -> None:
         if run_picie:
             n_rows += 1
 
-        if cfg.dark_mode:
+        if cfg.eval.dark_mode:
             plt.style.use("dark_background")
 
         for good_images in batch_list(range(len(all_good_images)), 10):
@@ -236,16 +249,14 @@ def my_app(cfg: DictConfig) -> None:
                 plot_label = (model.label_cmap[saved_data["label"][img_num]]).astype(
                     np.uint8
                 )
-                Image.fromarray(plot_img).save(
-                    join(join(result_dir, "img", str(img_num) + ".jpg"))
-                )
+                Image.fromarray(plot_img).save(result_dir / "img" / f"{img_num}.jpg")
                 Image.fromarray(plot_label).save(
-                    join(join(result_dir, "label", str(img_num) + ".png"))
+                    result_dir / "label" / f"{img_num}.png"
                 )
 
                 ax[0, i].imshow(plot_img)
                 ax[1, i].imshow(plot_label)
-                if cfg.run_prediction:
+                if cfg.eval.run_prediction:
                     plot_cluster = (
                         model.label_cmap[
                             model.test_cluster_metrics.map_clusters(
@@ -254,7 +265,7 @@ def my_app(cfg: DictConfig) -> None:
                         ]
                     ).astype(np.uint8)
                     Image.fromarray(plot_cluster).save(
-                        join(join(result_dir, "cluster", str(img_num) + ".png"))
+                        result_dir / "cluster" / f"{img_num}.png"
                     )
                     ax[2, i].imshow(plot_cluster)
                 if run_picie:
@@ -263,12 +274,12 @@ def my_app(cfg: DictConfig) -> None:
                     ].astype(np.uint8)
                     ax[3, i].imshow(picie_img)
                     Image.fromarray(picie_img).save(
-                        join(join(result_dir, "picie", str(img_num) + ".png"))
+                        result_dir / "picie" / f"{img_num}.png"
                     )
 
             ax[0, 0].set_ylabel("Image", fontsize=26)
             ax[1, 0].set_ylabel("Label", fontsize=26)
-            if cfg.run_prediction:
+            if cfg.eval.run_prediction:
                 ax[2, 0].set_ylabel("STEGO\n(Ours)", fontsize=26)
             if run_picie:
                 ax[3, 0].set_ylabel("PiCIE\n(Baseline)", fontsize=26)

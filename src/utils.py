@@ -1,7 +1,7 @@
+import argparse
 import collections
 import io
-import os
-from os.path import join
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -68,11 +68,11 @@ def one_hot_feats(labels, n_classes):
     return F.one_hot(labels, n_classes).permute(0, 3, 1, 2).to(torch.float32)
 
 
-def load_model(model_type, data_dir):
+def load_model(model_type, data_dir: Path, cfg):
     if model_type == "robust_resnet50":
         model = models.resnet50(pretrained=False)
-        model_file = join(data_dir, "imagenet_l2_3_0.pt")
-        if not os.path.exists(model_file):
+        model_file = data_dir / "imagenet_l2_3_0.pt"
+        if not model_file.exists():
             wget.download(
                 "http://6.869.csail.mit.edu/fa19/psets19/pset6/imagenet_l2_3_0.pt",
                 model_file,
@@ -87,8 +87,8 @@ def load_model(model_type, data_dir):
         model = torch.nn.Sequential(*list(model.children())[:-1])
     elif model_type == "densecl":
         model = models.resnet50(pretrained=False)
-        model_file = join(data_dir, "densecl_r50_coco_1600ep.pth")
-        if not os.path.exists(model_file):
+        model_file = data_dir / "densecl_r50_coco_1600ep.pth"
+        if not model_file.exists():
             wget.download(
                 "https://cloudstor.aarnet.edu.au/plus/s/3GapXiWuVAzdKwJ/download",
                 model_file,
@@ -103,8 +103,8 @@ def load_model(model_type, data_dir):
         model = torch.nn.Sequential(*list(model.children())[:-1])
     elif model_type == "mocov2":
         model = models.resnet50(pretrained=False)
-        model_file = join(data_dir, "moco_v2_800ep_pretrain.pth.tar")
-        if not os.path.exists(model_file):
+        model_file = data_dir / "moco_v2_800ep_pretrain.pth.tar"
+        if not model_file.exists():
             wget.download(
                 "https://dl.fbaipublicfiles.com/moco/moco_checkpoints/"
                 "moco_v2_800ep/moco_v2_800ep_pretrain.pth.tar",
@@ -136,10 +136,11 @@ def load_model(model_type, data_dir):
             *list(model.children())[:-1] + [torch.nn.AdaptiveAvgPool2d((1, 1))]
         )
     else:
-        raise ValueError("No model: {} found".format(model_type))
+        raise ValueError(f"No model: {model_type} found")
 
     model.eval()
-    model.cuda()
+    if cfg.use_cuda:
+        model.cuda()
     return model
 
 
@@ -174,9 +175,9 @@ def prep_args():
         if len(arg.split("=")) == 2:
             new_args.append(arg)
         elif arg.startswith("--"):
-            new_args.append(arg[2:] + "=" + old_args.pop(0))
+            new_args.append(f"{arg[2:]}={old_args.pop(0)}")
         else:
-            raise ValueError("Unexpected arg style {}".format(arg))
+            raise ValueError(f"Unexpected arg style {arg}")
     sys.argv = new_args
 
 
@@ -189,12 +190,19 @@ def get_transform(res, is_label, crop_type):
         cropper = T.Lambda(lambda x: x)
         res = (res, res)
     else:
-        raise ValueError("Unknown Cropper {}".format(crop_type))
+        raise ValueError(f"Unknown Cropper {crop_type}")
     if is_label:
-        return T.Compose([T.Resize(res, Image.NEAREST), cropper, ToTargetTensor()])
+        return T.Compose(
+            [T.Resize(res, T.InterpolationMode.NEAREST), cropper, ToTargetTensor()]
+        )
     else:
         return T.Compose(
-            [T.Resize(res, Image.NEAREST), cropper, T.ToTensor(), normalize]
+            [
+                T.Resize(res, T.InterpolationMode.NEAREST),
+                cropper,
+                T.ToTensor(),
+                normalize,
+            ]
         )
 
 
