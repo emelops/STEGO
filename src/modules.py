@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import List, Optional
 
 import torch
 import torch.nn.functional as F
@@ -462,8 +462,8 @@ class ContrastiveCorrelationLoss(torch.nn.Module):
             feats, feats_pos, code, code_pos, self.pos_inter_shift
         )
 
-        neg_losses = []
-        neg_cds = []
+        neg_losses: List[torch.Tensor] = []
+        neg_cds: List[torch.Tensor] = []
         for i in range(self.neg_samples):
             perm_neg = super_perm(orig_feats.shape[0], orig_feats.device)
             feats_neg = sample(orig_feats[perm_neg], coords2)
@@ -473,6 +473,7 @@ class ContrastiveCorrelationLoss(torch.nn.Module):
             )
             neg_losses.append(neg_inter_loss)
             neg_cds.append(neg_inter_cd)
+        # TODO: cannot find "axis" in documentation (dim?)
         neg_inter_loss = torch.cat(neg_losses, axis=0)
         neg_inter_cd = torch.cat(neg_cds, axis=0)
 
