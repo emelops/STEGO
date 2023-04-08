@@ -1,7 +1,11 @@
+from typing import Optional
+
 import torch
 import torch.nn.functional as F
 
 import dino.vision_transformer as vits
+
+CUDA_AVAILABLE = torch.cuda.is_available()
 
 
 class LambdaLayer(torch.nn.Module):
@@ -14,18 +18,27 @@ class LambdaLayer(torch.nn.Module):
 
 
 class DinoFeaturizer(torch.nn.Module):
-    def __init__(self, dim, cfg):
+    def __init__(
+        self,
+        dim,
+        dino_patch_size: int,  # cfg.train.dino_patch_size
+        dino_feat_type: str,  # cfg.train.dino_feat_type
+        model_type: str,  # cfg.train.model_type
+        pretrained_weights,  # cfg.train.pretrained_weights
+        projection_type=Optional[str],  # cfg.train.projection_type
+        return_dropout=Optional[bool],  # cfg.train.dropout:
+    ):
         super().__init__()
-        self.cfg = cfg
         self.dim = dim
-        patch_size = self.cfg.train.dino_patch_size
+        patch_size = dino_patch_size
         self.patch_size = patch_size
-        self.feat_type = self.cfg.train.dino_feat_type
-        arch = self.cfg.train.model_type
+        self.feat_type = dino_feat_type
+        self.return_dropout = return_dropout
+        arch = model_type
         self.model = vits.__dict__[arch](patch_size=patch_size, num_classes=0)
         for p in self.model.parameters():
             p.requires_grad = False
-        if cfg.use_cuda:
+        if CUDA_AVAILABLE:
             self.model.eval().cuda()
         else:
             self.model.eval()
@@ -42,8 +55,8 @@ class DinoFeaturizer(torch.nn.Module):
         else:
             raise ValueError("Unknown arch and patch size")
 
-        if cfg.train.pretrained_weights is not None:
-            state_dict = torch.load(cfg.train.pretrained_weights, map_location="cpu")
+        if pretrained_weights is not None:
+            state_dict = torch.load(pretrained_weights, map_location="cpu")
             state_dict = state_dict["teacher"]
             # remove `module.` prefix
             state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
@@ -55,7 +68,7 @@ class DinoFeaturizer(torch.nn.Module):
 
             msg = self.model.load_state_dict(state_dict, strict=False)
             print(
-                f"Pretrained weights found at {cfg.train.pretrained_weights} and loaded with msg: {msg}"
+                f"Pretrained weights found at {pretrained_weights} and loaded with msg: {msg}"
             )
         else:
             print(
@@ -71,7 +84,7 @@ class DinoFeaturizer(torch.nn.Module):
         else:
             self.n_feats = 768
         self.cluster1 = self.make_clusterer(self.n_feats)
-        self.proj_type = cfg.train.projection_type
+        self.proj_type = projection_type
         if self.proj_type == "nonlinear":
             self.cluster2 = self.make_nonlinear_clusterer(self.n_feats)
 
@@ -125,7 +138,7 @@ class DinoFeaturizer(torch.nn.Module):
         else:
             code = image_feat
 
-        if self.cfg.train.dropout:
+        if self.return_dropout:
             return self.dropout(image_feat), code
         else:
             return image_feat, code
@@ -352,9 +365,28 @@ def sample_nonzero_locations(t, target_size):
 
 
 class ContrastiveCorrelationLoss(torch.nn.Module):
-    def __init__(self, cfg):
+    def __init__(
+        self,
+        pointwise,  # cfg.train.pointwise:
+        zero_clamp,  # cfg.train.zero_clamp:
+        stabilize,  # cfg.train.stabilize:
+        feature_samples,  # self.cfg.train.feature_samples,
+        use_salience,  # cfg.train.use_salience:
+        pos_intra_shift,  # cfg.train.pos_intra_shift
+        pos_inter_shift,  # cfg.train.pos_inter_shift
+        neg_samples,  # cfg.train.neg_samples
+        neg_inter_shift,  # cfg.train.neg_inter_shift
+    ):
         super(ContrastiveCorrelationLoss, self).__init__()
-        self.cfg = cfg
+        self.pointwise = pointwise
+        self.zero_clamp = zero_clamp
+        self.stabilize = stabilize
+        self.feature_samples = feature_samples
+        self.use_salience = use_salience
+        self.pos_intra_shift = pos_intra_shift
+        self.pos_inter_shift = pos_inter_shift
+        self.neg_samples = neg_samples
+        self.neg_inter_shift = neg_inter_shift
 
     def standard_scale(self, t):
         t1 = t - t.mean()
@@ -366,19 +398,19 @@ class ContrastiveCorrelationLoss(torch.nn.Module):
             # Comes straight from backbone which is currently frozen. this saves mem.
             fd = tensor_correlation(norm(f1), norm(f2))
 
-            if self.cfg.train.pointwise:
+            if self.pointwise:
                 old_mean = fd.mean()
                 fd -= fd.mean([3, 4], keepdim=True)
                 fd = fd - fd.mean() + old_mean
 
         cd = tensor_correlation(norm(c1), norm(c2))
 
-        if self.cfg.train.zero_clamp:
+        if self.zero_clamp:
             min_val = 0.0
         else:
             min_val = -9999.0
 
-        if self.cfg.train.stabilize:
+        if self.stabilize:
             loss = -cd.clamp(min_val, 0.8) * (fd - shift)
         else:
             loss = -cd.clamp(min_val) * (fd - shift)
@@ -396,12 +428,12 @@ class ContrastiveCorrelationLoss(torch.nn.Module):
     ):
         coord_shape = [
             orig_feats.shape[0],
-            self.cfg.train.feature_samples,
-            self.cfg.train.feature_samples,
+            self.feature_samples,
+            self.feature_samples,
             2,
         ]
 
-        if self.cfg.train.use_salience:
+        if self.use_salience:
             coords1_nonzero = sample_nonzero_locations(orig_salience, coord_shape)
             coords2_nonzero = sample_nonzero_locations(orig_salience_pos, coord_shape)
             coords1_reg = torch.rand(coord_shape, device=orig_feats.device) * 2 - 1
@@ -424,20 +456,20 @@ class ContrastiveCorrelationLoss(torch.nn.Module):
         code_pos = sample(orig_code_pos, coords2)
 
         pos_intra_loss, pos_intra_cd = self.helper(
-            feats, feats, code, code, self.cfg.train.pos_intra_shift
+            feats, feats, code, code, self.pos_intra_shift
         )
         pos_inter_loss, pos_inter_cd = self.helper(
-            feats, feats_pos, code, code_pos, self.cfg.train.pos_inter_shift
+            feats, feats_pos, code, code_pos, self.pos_inter_shift
         )
 
         neg_losses = []
         neg_cds = []
-        for i in range(self.cfg.train.neg_samples):
+        for i in range(self.neg_samples):
             perm_neg = super_perm(orig_feats.shape[0], orig_feats.device)
             feats_neg = sample(orig_feats[perm_neg], coords2)
             code_neg = sample(orig_code[perm_neg], coords2)
             neg_inter_loss, neg_inter_cd = self.helper(
-                feats, feats_neg, code, code_neg, self.cfg.train.neg_inter_shift
+                feats, feats_neg, code, code_neg, self.neg_inter_shift
             )
             neg_losses.append(neg_inter_loss)
             neg_cds.append(neg_inter_cd)

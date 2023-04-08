@@ -306,13 +306,18 @@ def my_app(cfg: DictConfig) -> None:
         image_set="train",
         transform=get_transform(cfg.train.res, False, cfg.train.loader_crop_type),
         target_transform=get_transform(cfg.train.res, True, cfg.train.loader_crop_type),
-        cfg=cfg,
         aug_geometric_transform=None,
         aug_photometric_transform=None,
         num_neighbors=cfg.num_neighbors,
         mask=True,
         pos_images=True,
         pos_labels=True,
+        model_type_override=None,
+        dir_dataset_n_classes=cfg.train.get("dir_dataset_n_classes"),
+        dir_dataset_name=cfg.train.get("dir_dataset_name"),
+        crop_ratio=cfg.train.get("crop_ratio"),
+        model_type=cfg.train.model_type,
+        res=cfg.train.res,
     )
 
     val_loader_crop = "center"
@@ -326,7 +331,12 @@ def my_app(cfg: DictConfig) -> None:
         mask=True,
         pos_images=True,
         pos_labels=True,
-        cfg=cfg,
+        model_type_override=None,
+        dir_dataset_n_classes=cfg.train.get("dir_dataset_n_classes"),
+        dir_dataset_name=cfg.train.get("dir_dataset_name"),
+        crop_ratio=cfg.train.get("crop_ratio"),
+        model_type=cfg.train.model_type,
+        res=cfg.train.res,
     )
 
     train_loader = DataLoader(

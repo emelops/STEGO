@@ -71,7 +71,12 @@ def my_app(cfg: DictConfig) -> None:
         label_transform_with_resize,
         None,
         None,
-        cfg,
+        model_type_override=None,
+        dir_dataset_n_classes=cfg.train.get("dir_dataset_n_classes"),
+        dir_dataset_name=cfg.train.get("dir_dataset_name"),
+        crop_ratio=cfg.train.get("crop_ratio"),
+        model_type=cfg.train.model_type,
+        res=cfg.train.res,
     )
 
     prefix = f"crf/{cfg.dataset_name}_{cfg.experiment_name}"

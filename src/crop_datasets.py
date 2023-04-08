@@ -88,20 +88,25 @@ class RandomCropComputer(Dataset):
             raise ValueError(f"Unknown crop type {crop_type}")
 
         self.dataset = ContrastiveSegDataset(
-            cfg.pytorch_data_dir,
-            dataset_name,
-            None,
-            image_set,
-            T.ToTensor(),
-            ToTargetTensor(),
-            cfg=cfg,
-            num_neighbors=cfg.train.num_neighbors,
+            pytorch_data_dir=cfg.pytorch_data_dir,
+            dataset_name=dataset_name,
+            crop_type=None,
+            image_set=image_set,
+            transform=T.ToTensor(),
+            target_transform=ToTargetTensor(),
+            num_neighbors=0,  # unused because pos_images=False and pos_labels=False
             pos_labels=False,
             pos_images=False,
             mask=False,
             aug_geometric_transform=None,
             aug_photometric_transform=None,
             extra_transform=cropper,
+            model_type_override=None,
+            dir_dataset_n_classes=cfg.train.get("dir_dataset_n_classes"),
+            dir_dataset_name=cfg.train.get("dir_dataset_name"),
+            crop_ratio=cfg.train.get("crop_ratio"),
+            model_type=cfg.train.model_type,
+            res=cfg.train.res,
         )
 
     def random_cropper(self, i, x):

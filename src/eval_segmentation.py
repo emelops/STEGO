@@ -102,7 +102,12 @@ def my_app(cfg: DictConfig) -> None:
             image_set="val",
             transform=get_transform(cfg.eval.res, False, loader_crop),
             target_transform=get_transform(cfg.eval.res, True, loader_crop),
-            cfg=model.cfg,
+            model_type_override=None,
+            dir_dataset_n_classes=cfg.train.get("dir_dataset_n_classes"),
+            dir_dataset_name=cfg.train.get("dir_dataset_name"),
+            crop_ratio=cfg.train.get("crop_ratio"),
+            model_type=cfg.train.model_type,
+            res=cfg.train.res,
         )
 
         test_loader = DataLoader(

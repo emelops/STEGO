@@ -12,12 +12,14 @@ from tqdm import tqdm
 from data import ContrastiveSegDataset
 from utils import get_transform, load_model, prep_args
 
+CUDA_AVAILABLE = torch.cuda.is_available()
+
 
 def get_feats(model, loader, cfg):
     all_feats = []
     for pack in tqdm(loader):
         img = pack["img"]
-        if cfg.use_cuda:
+        if CUDA_AVAILABLE:
             feats = F.normalize(model.forward(img.cuda()).mean([2, 3]), dim=1)
         else:
             feats = F.normalize(model.forward(img).mean([2, 3]), dim=1)
@@ -51,18 +53,35 @@ def my_app(cfg: DictConfig) -> None:
     if cfg.train.arch == "dino":
         from modules import DinoFeaturizer, LambdaLayer
 
-        if cfg.use_cuda:
+        if CUDA_AVAILABLE:
             no_ap_model = torch.nn.Sequential(
-                DinoFeaturizer(20, cfg),
+                DinoFeaturizer(
+                    20,
+                    dino_patch_size=cfg.train.dino_patch_size,
+                    dino_feat_type=cfg.train.dino_feat_type,
+                    model_type=cfg.train.model_type,
+                    pretrained_weights=cfg.train.pretrained_weights,
+                    projection_type=cfg.train.projection_type,
+                    return_dropout=cfg.train.dropout,
+                ),
                 LambdaLayer(lambda p: p[0]),  # dim doesent matter
             ).cuda()
         else:
             no_ap_model = torch.nn.Sequential(
-                DinoFeaturizer(20, cfg), LambdaLayer(lambda p: p[0])
+                DinoFeaturizer(
+                    20,
+                    dino_patch_size=cfg.train.dino_patch_size,
+                    dino_feat_type=cfg.train.dino_feat_type,
+                    model_type=cfg.train.model_type,
+                    pretrained_weights=cfg.train.pretrained_weights,
+                    projection_type=cfg.train.projection_type,
+                    return_dropout=cfg.train.dropout,
+                ),
+                LambdaLayer(lambda p: p[0]),
             )  # dim doesent matter
     else:
-        if cfg.use_cuda:
-            cut_model = load_model(cfg.train.model_type, output_root / "data").cuda
+        if CUDA_AVAILABLE:
+            cut_model = load_model(cfg.train.model_type, output_root / "data").cuda()
             no_ap_model = torch.nn.Sequential(*list(cut_model.children())[:-1]).cuda()
         else:
             cut_model = load_model(cfg.train.model_type, output_root / "data")
@@ -100,7 +119,12 @@ def my_app(cfg: DictConfig) -> None:
                     image_set=image_set,
                     transform=get_transform(res, False, "center"),
                     target_transform=get_transform(res, True, "center"),
-                    cfg=cfg,
+                    model_type_override=None,
+                    dir_dataset_n_classes=cfg.train.get("dir_dataset_n_classes"),
+                    dir_dataset_name=cfg.train.get("dir_dataset_name"),
+                    crop_ratio=cfg.train.get("crop_ratio"),
+                    model_type=cfg.train.model_type,
+                    res=cfg.train.res,
                 )
 
                 loader = DataLoader(
@@ -117,7 +141,7 @@ def my_app(cfg: DictConfig) -> None:
                     step = normed_feats.shape[0] // n_batches
                     print(normed_feats.shape)
                     for i in tqdm(range(0, normed_feats.shape[0], step)):
-                        if cfg.use_cuda:
+                        if CUDA_AVAILABLE:
                             torch.cuda.empty_cache()
                         batch_feats = normed_feats[i : i + step, :]
                         pairwise_sims = torch.einsum(

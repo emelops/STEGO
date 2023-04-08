@@ -163,7 +163,15 @@ class LitUnsupervisedSegmenter(pl.LightningModule):
                 cfg.train.granularity, cut_model, dim, cfg.train.continuous
             )
         elif cfg.train.arch == "dino":
-            self.net = DinoFeaturizer(dim, cfg)
+            self.net = DinoFeaturizer(
+                dim,
+                dino_patch_size=cfg.train.dino_patch_size,
+                dino_feat_type=cfg.train.dino_feat_type,
+                model_type=cfg.train.model_type,
+                pretrained_weights=cfg.train.pretrained_weights,
+                projection_type=cfg.train.projection_type,
+                return_dropout=cfg.train.dropout,
+            )
         else:
             raise ValueError(f"Unknown arch {cfg.train.arch}")
 
@@ -197,7 +205,17 @@ class LitUnsupervisedSegmenter(pl.LightningModule):
             cfg.train.shift,
         )
 
-        self.contrastive_corr_loss_fn = ContrastiveCorrelationLoss(cfg)
+        self.contrastive_corr_loss_fn = ContrastiveCorrelationLoss(
+            pointwise=cfg.train.pointwise,
+            zero_clamp=cfg.train.zero_clamp,
+            stabilize=cfg.train.stabilize,
+            feature_samples=cfg.train.feature_samples,
+            use_salience=cfg.train.use_salience,
+            pos_intra_shift=cfg.train.pos_intra_shift,
+            pos_inter_shift=cfg.train.pos_inter_shift,
+            neg_samples=cfg.train.neg_samples,
+            neg_inter_shift=cfg.train.neg_inter_shift,
+        )
         for p in self.contrastive_corr_loss_fn.parameters():
             p.requires_grad = False
 
@@ -595,13 +613,18 @@ def my_app(cfg: DictConfig) -> None:
         image_set="train",
         transform=get_transform(cfg.train.res, False, cfg.train.loader_crop_type),
         target_transform=get_transform(cfg.train.res, True, cfg.train.loader_crop_type),
-        cfg=cfg,
         aug_geometric_transform=geometric_transforms,
         aug_photometric_transform=photometric_transforms,
         num_neighbors=cfg.train.num_neighbors,
         mask=True,
         pos_images=True,
         pos_labels=True,
+        model_type_override=None,
+        dir_dataset_n_classes=cfg.train.get("dir_dataset_n_classes"),
+        dir_dataset_name=cfg.train.get("dir_dataset_name"),
+        crop_ratio=cfg.train.get("crop_ratio"),
+        model_type=cfg.train.model_type,
+        res=cfg.train.res,
     )
 
     if cfg.train.dataset_name == "voc":
@@ -617,7 +640,12 @@ def my_app(cfg: DictConfig) -> None:
         transform=get_transform(320, False, val_loader_crop),
         target_transform=get_transform(320, True, val_loader_crop),
         mask=True,
-        cfg=cfg,
+        model_type_override=None,
+        dir_dataset_n_classes=cfg.train.get("dir_dataset_n_classes"),
+        dir_dataset_name=cfg.train.get("dir_dataset_name"),
+        crop_ratio=cfg.train.get("crop_ratio"),
+        model_type=cfg.train.model_type,
+        res=cfg.train.res,
     )
 
     # val_dataset = MaterializedDataset(val_dataset)

@@ -1,6 +1,6 @@
 import random
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import torch.multiprocessing
@@ -447,12 +447,14 @@ class MaterializedDataset(Dataset):
 
 def select_dataset(
     dataset_name: str,
-    cfg,
     image_set,
     transform,
     target_transform,
-    crop_type,
+    crop_type: Optional[str],
     pytorch_data_dir,
+    dir_dataset_n_classes: Optional[int],
+    dir_dataset_name: Optional[str],
+    crop_ratio: Optional[float],
 ) -> Tuple[int, Any]:
     dataset_class: Any
     extra_args: Dict[str, Any]
@@ -465,20 +467,24 @@ def select_dataset(
         dataset_class = PotsdamRaw
         extra_args = dict(coarse_labels=True)
     elif dataset_name == "directory":
-        n_classes = cfg.train.dir_dataset_n_classes
+        if dir_dataset_n_classes is None:
+            raise Exception("Need dir_datset_n_classes with dataset_name='directory'")
+        if dir_dataset_name is None:
+            raise Exception("Need dir_datset_name with dataset_name='directory'")
+        n_classes = dir_dataset_n_classes
         dataset_class = DirectoryDataset
-        extra_args = dict(path=cfg.train.dir_dataset_name)
+        extra_args = dict(path=dir_dataset_name)
     elif dataset_name == "cityscapes" and crop_type is None:
         n_classes = 27
         dataset_class = CityscapesSeg
         extra_args = dict()
     elif dataset_name == "cityscapes" and crop_type is not None:
+        if crop_ratio is None:
+            raise Exception("Need crop_ratio with 'crop_type'")
         n_classes = 27
         dataset_class = CroppedDataset
         extra_args = dict(
-            dataset_name="cityscapes",
-            crop_type=crop_type,
-            crop_ratio=cfg.train.crop_ratio,
+            dataset_name="cityscapes", crop_type=crop_type, crop_ratio=crop_ratio
         )
     elif dataset_name == "cocostuff3":
         n_classes = 3
@@ -489,12 +495,12 @@ def select_dataset(
         dataset_class = Coco
         extra_args = dict(coarse_labels=False, subset=7, exclude_things=True)
     elif dataset_name == "cocostuff27" and crop_type is not None:
+        if crop_ratio is None:
+            raise Exception("Need crop_ratio with 'crop_type'")
         n_classes = 27
         dataset_class = CroppedDataset
         extra_args = dict(
-            dataset_name="cocostuff27",
-            crop_type=cfg.train.crop_type,
-            crop_ratio=cfg.train.crop_ratio,
+            dataset_name="cocostuff27", crop_type=crop_type, crop_ratio=crop_ratio
         )
     elif dataset_name == "cocostuff27" and crop_type is None:
         n_classes = 27
@@ -525,7 +531,6 @@ class ContrastiveSegDataset(Dataset):
         image_set,
         transform,
         target_transform,
-        cfg,
         aug_geometric_transform=None,
         aug_photometric_transform=None,
         num_neighbors=5,
@@ -535,6 +540,11 @@ class ContrastiveSegDataset(Dataset):
         pos_images=False,
         extra_transform=None,
         model_type_override=None,
+        dir_dataset_n_classes=None,  # cfg.train.get("dir_dataset_n_classes")
+        dir_dataset_name=None,  # cfg.train.get("dir_dataset_name")
+        crop_ratio=None,  # cfg.train.get("crop_ratio")
+        model_type=None,  # cfg.train.model_type
+        res=None,  # cfg.train.res
     ):
         super().__init__()
         self.num_neighbors = num_neighbors
@@ -547,12 +557,14 @@ class ContrastiveSegDataset(Dataset):
 
         (self.n_classes, self.dataset) = select_dataset(
             dataset_name,
-            cfg,
             image_set,
             transform,
             target_transform,
             crop_type,
             pytorch_data_dir,
+            dir_dataset_n_classes=dir_dataset_n_classes,
+            dir_dataset_name=dir_dataset_name,
+            crop_ratio=crop_ratio,
         )
 
         self.aug_geometric_transform = aug_geometric_transform
@@ -560,16 +572,14 @@ class ContrastiveSegDataset(Dataset):
 
         if model_type_override is not None:
             model_type = model_type_override
-        else:
-            model_type = cfg.train.model_type
 
         nice_dataset_name = (
-            cfg.train.dir_dataset_name if dataset_name == "directory" else dataset_name
+            dir_dataset_name if dataset_name == "directory" else dataset_name
         )
         feature_cache_file = (
             Path(pytorch_data_dir)
             / "nns"
-            / f"nns_{model_type}_{nice_dataset_name}_{image_set}_{crop_type}_{cfg.train.res}.npz"
+            / f"nns_{model_type}_{nice_dataset_name}_{image_set}_{crop_type}_{res}.npz"
         )
         if pos_labels or pos_images:
             if not feature_cache_file.exists() or compute_knns:

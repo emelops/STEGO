@@ -101,13 +101,18 @@ def my_app(cfg: DictConfig) -> None:
             image_set="train",
             transform=transform,
             target_transform=get_transform(high_res, True, "center"),
-            cfg=cfg,
             aug_geometric_transform=None,
             aug_photometric_transform=None,
             num_neighbors=2,
             mask=True,
             pos_images=True,
             pos_labels=True,
+            model_type_override=None,
+            dir_dataset_n_classes=cfg.train.get("dir_dataset_n_classes"),
+            dir_dataset_name=cfg.train.get("dir_dataset_name"),
+            crop_ratio=cfg.train.get("crop_ratio"),
+            model_type=cfg.train.model_type,
+            res=cfg.train.res,
         )
         loader = DataLoader(dataset, 16, shuffle=True, num_workers=cfg.num_workers)
 
@@ -121,7 +126,15 @@ def my_app(cfg: DictConfig) -> None:
             cfg.plot.granularity, cut_model, cfg.plot.dim, cfg.plot.continuous
         )
     elif cfg.plot.arch == "dino":
-        net = DinoFeaturizer(cfg.plot.dim, cfg)
+        net = DinoFeaturizer(
+            cfg.plot.dim,
+            dino_patch_size=cfg.train.dino_patch_size,
+            dino_feat_type=cfg.train.dino_feat_type,
+            model_type=cfg.train.model_type,
+            pretrained_weights=cfg.train.pretrained_weights,
+            projection_type=cfg.train.projection_type,
+            return_dropout=cfg.train.dropout,
+        )
     else:
         raise ValueError(f"Unknown arch {cfg.plot.arch}")
     if cfg.use_cuda:
