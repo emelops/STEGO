@@ -2,6 +2,7 @@ import random
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Dict
 
 import hydra
 import matplotlib.pyplot as plt
@@ -674,6 +675,7 @@ def my_app(cfg: DictConfig) -> None:
 
     tb_logger = TensorBoardLogger(log_dir / name, default_hp_metric=False)
 
+    gpu_args: Dict[str, Any]
     if cfg.train.submitting_to_aml:
         gpu_args = dict(gpus=1, val_check_interval=250)
 
