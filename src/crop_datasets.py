@@ -73,7 +73,6 @@ class RandomCropComputer(Dataset):
         )
         self.image_set = image_set
         self.dataset_name = dataset_name
-        self.cfg = cfg
 
         self.img_dir = self.save_dir / "img" / image_set
         self.label_dir = self.save_dir / "label" / image_set
