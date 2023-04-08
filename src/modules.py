@@ -370,7 +370,7 @@ class ContrastiveCorrelationLoss(torch.nn.Module):
         pointwise,  # cfg.train.pointwise:
         zero_clamp,  # cfg.train.zero_clamp:
         stabilize,  # cfg.train.stabilize:
-        feature_samples,  # self.cfg.train.feature_samples,
+        feature_samples,  # cfg.train.feature_samples,
         use_salience,  # cfg.train.use_salience:
         pos_intra_shift,  # cfg.train.pos_intra_shift
         pos_inter_shift,  # cfg.train.pos_inter_shift
