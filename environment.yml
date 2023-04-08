@@ -10,6 +10,7 @@ dependencies:
   - python=3.10.4
   - pytorch=1.13.1
   - pytorch-lightning=1.9.4
+  - scikit-learn=1.0.2
   - scikit-image=0.19.2
   - torchvision=0.14.1
   - pip:
